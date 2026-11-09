@@ -312,7 +312,7 @@ export const createReport = async (req, res, next) => {
     // Hapus gambar yang sudah terunggah jika proses pembuatan gagal.
     if (uploadedImages.length > 0) {
       try {
-        await deleteImages(uploadedImages);
+        await deleteFiles(uploadedImages);
       } catch (cleanupError) {
         console.error(
           "Gagal membersihkan gambar Cloudinary:",
