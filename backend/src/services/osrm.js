@@ -87,3 +87,24 @@ export const fetchRoutes = async (points, { alternatives = false, vehicle = "mob
   // waypoints = lokasi asal, via, dan tujuan setelah ditempelkan ke jalan (dipakai untuk membuang lorong buntu)
   return data.routes.map((r) => ({ ...r, waypoints: data.waypoints }));
 };
+
+/**
+ * Titik jalan terdekat dari sebuah koordinat (OSRM /nearest).
+ * @returns {Promise<{distanceM: number, name: string}|null>} null jika server tidak dapat dihubungi.
+ *          distanceM = Infinity bila tidak ada jalan di sekitar titik.
+ */
+export const nearestRoad = async ([lng, lat], { vehicle = "mobil", timeoutMs = TIMEOUT_MS } = {}) => {
+  const { url: base, profile } = endpointFor(vehicle);
+  try {
+    const res = await fetch(`${base}/nearest/v1/${profile}/${lng},${lat}?number=1`, {
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { "User-Agent": "pantau-jalan/1.0" },
+    });
+    const data = await res.json().catch(() => null);
+    if (data?.code === "NoSegment") return { distanceM: Infinity, name: "" };
+    if (!res.ok || data?.code !== "Ok" || !data.waypoints?.length) return null;
+    return { distanceM: data.waypoints[0].distance, name: data.waypoints[0].name || "" };
+  } catch {
+    return null;
+  }
+};

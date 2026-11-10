@@ -1,4 +1,4 @@
-import Report, { SEVERITY } from "../models/Report.js";
+import Report, { SEVERITY, PUBLIC_VALIDATION_FILTER } from "../models/Report.js";
 import { fetchRoutes } from "./osrm.js";
 import { nearestOnLine, offsetPerpendicular, bboxPolygon, removeLoopsAtVias } from "../utils/geo.js";
 import { blockingSeverities, passableBy } from "../utils/vehicle.js";
@@ -56,6 +56,7 @@ const normalizeImages = (images = []) =>
 const findNearbyReports = async (coords) => {
   const candidates = await Report.find({
     status: { $in: CFG.statuses },
+    ...PUBLIC_VALIDATION_FILTER,
     type: "jalan",
     location: {
       $geoWithin: {
@@ -340,6 +341,7 @@ export const findSafeRoute = async (
 export const getActiveHazardsGeoJSON = async (bbox) => {
   const filter = {
     status: { $in: CFG.statuses },
+    ...PUBLIC_VALIDATION_FILTER,
     // type: "jalan",
     "location.coordinates.0": { $exists: true },
   };

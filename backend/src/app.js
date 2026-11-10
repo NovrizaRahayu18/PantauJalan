@@ -10,6 +10,7 @@ import userRoutes from "./routes/user.routes.js";
 import reportRoutes from "./routes/report.routes.js";
 import routeRoutes from "./routes/route.routes.js";
 import progressRoutes from "./routes/progress.routes.js";
+import validationRoutes from "./routes/validation.routes.js";
 import { notFound, errorHandler } from "./middlewares/errorHandler.js";
 import { success } from "./utils/responseFormatter.js";
 
@@ -40,6 +41,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/routes", routeRoutes);
+app.use("/api/validation", validationRoutes);
 app.use("/api", progressRoutes);
 
 app.use(notFound);
