@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import path from "path";
-import Report from "../models/Report.js";
+import Report, { PUBLIC_VALIDATION_FILTER } from "../models/Report.js";
 import RepairProgress from "../models/RepairProgress.js";
 import { MAX_IMAGES } from "../middlewares/upload.js";
 import { success, created, error } from "../utils/responseFormatter.js";
@@ -8,12 +8,37 @@ import { getPagination, buildMeta } from "../utils/paginator.js";
 import { removeFiles } from "../utils/file.js";
 import { resolveLocation } from "../services/geoCode.js";
 import { deleteFiles, uploadFiles } from "../utils/cloudinaryUpload.js";
+import { analyzeImage } from "../services/validation/imageTools.js";
+import { validateReport } from "../services/validation/index.js";
 
 const STAFF_ROLES = ["admin", "petugas"];
 const canManage = (user, report) =>
   STAFF_ROLES.includes(user.role) || report.reporter?.toString() === user.id;
 
-const toImagePaths = (files = []) => files.map((f) => `uploads/reports/${f.filename}`);
+const isStaff = (user) => STAFF_ROLES.includes(user?.role);
+
+// Data forensik (hash foto, GPS EXIF) dan jejak pengirim tidak pernah dikirim ke klien.
+// Masyarakat hanya melihat validation.status; petugas melihat skor, pemeriksaan, dan hasil AI.
+const sanitize = (doc, staff) => {
+  if (!doc) return doc;
+  const o = typeof doc.toObject === "function" ? doc.toObject() : { ...doc };
+  delete o.submitter;
+  delete o.__v;
+  if (o.validation) {
+    delete o.validation.photos;
+    if (!staff) o.validation = { status: o.validation.status };
+  }
+  return o;
+};
+
+const LIST_SELECT_STAFF = "-submitter -validation.photos";
+const LIST_SELECT_PUBLIC =
+  "-submitter -validation.photos -validation.checks -validation.ai -validation.review -validation.duplicateOf -validation.trustScore -validation.duplicateCount";
+
+// Siapkan metadata forensik foto (hash, EXIF) dari buffer sebelum buffer dibuang.
+const analyzeFiles = (files = []) => Promise.all(files.map((f) => analyzeImage(f.buffer)));
+const toPhotoMeta = (uploaded, analyses) =>
+  uploaded.map((img, i) => ({ public_id: img.public_id, ...analyses[i] }));
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const REGION_FIELDS = ["street", "village", "district", "regency", "province"];
 
@@ -32,9 +57,17 @@ const buildLocation = (body) => {
 export const getReports = async (req, res, next) => {
   try {
     const { page, limit, skip } = getPagination(req.query);
-    const { search, status, severity, order, today, type } = req.query;
+    const { search, status, severity, order, today, type, validation } = req.query;
+    const staff = isStaff(req.user);
 
     const filter = {};
+
+    // Publik tidak melihat laporan flagged/duplicate/rejected. Petugas melihat semua dan dapat memfilter.
+    if (staff) {
+      if (validation) filter["validation.status"] = validation;
+    } else {
+      Object.assign(filter, PUBLIC_VALIDATION_FILTER);
+    }
 
     if (status) filter.status = status;
     if (type) filter.type = type;
@@ -69,6 +102,7 @@ export const getReports = async (req, res, next) => {
 
     const [items, totalItems] = await Promise.all([
       Report.find(filter)
+        .select(staff ? LIST_SELECT_STAFF : LIST_SELECT_PUBLIC)
         .sort(sort)
         .skip(skip)
         .limit(limit),
@@ -99,9 +133,11 @@ export const getReportById = async (req, res, next) => {
       });
     }
 
+    const staff = isStaff(req.user);
     const report = await Report.findById(id).lean();
 
-    if (!report) {
+    const hidden = ["flagged", "duplicate", "rejected"].includes(report?.validation?.status);
+    if (!report || (hidden && !staff)) {
       return error(res, {
         message: "Laporan tidak ditemukan",
         statusCode: 404,
@@ -109,7 +145,7 @@ export const getReportById = async (req, res, next) => {
     }
 
     const data = {
-      ...report,
+      ...sanitize(report, staff),
       images: (report.images ?? [])
         .map((image) =>
           typeof image === "string" ? image : image?.url
@@ -138,7 +174,8 @@ export const getReportSummary = async (req, res, next) => {
       });
     }
 
-    const match = {};
+    const staff = isStaff(req.user);
+    const match = staff ? {} : { ...PUBLIC_VALIDATION_FILTER };
 
     if (status) match.status = status;
     if (severity) match.severity = severity;
@@ -209,6 +246,14 @@ export const getReportSummary = async (req, res, next) => {
       ],
     };
 
+    if (staff) {
+      facets.validationSummary = [
+        { $group: { _id: { $ifNull: ["$validation.status", "pending"] }, total: { $sum: 1 } } },
+        { $project: { _id: 0, status: "$_id", total: 1 } },
+        { $sort: { status: 1 } },
+      ];
+    }
+
     fields.forEach((field) => {
       facets[field] = [
         {
@@ -272,8 +317,12 @@ export const createReport = async (req, res, next) => {
       });
     }
 
+    // Analisis foto (hash, EXIF) dari buffer sebelum diunggah.
+    const files = req.files ?? [];
+    const analyses = await analyzeFiles(files);
+
     // Upload gambar ke Cloudinary.
-    for (const file of req.files ?? []) {
+    for (const file of files) {
       const image = await uploadFiles(file, "reports");
       uploadedImages.push(image);
     }
@@ -289,6 +338,8 @@ export const createReport = async (req, res, next) => {
       severity,
       images: uploadedImages,
       location,
+      validation: { status: "pending", photos: toPhotoMeta(uploadedImages, analyses) },
+      submitter: req.submitter ?? {},
     };
 
     // Isi alamat dan wilayah berdasarkan koordinat.
@@ -304,9 +355,18 @@ export const createReport = async (req, res, next) => {
 
     const report = await Report.create(payload);
 
+    // Validasi otomatis tidak boleh menggagalkan pembuatan laporan.
+    try {
+      await validateReport(report._id);
+    } catch (validationError) {
+      console.error("Validasi laporan gagal:", validationError.message);
+    }
+
+    const fresh = await Report.findById(report._id).lean();
+
     return created(res, {
       message: "Laporan berhasil dibuat",
-      data: report,
+      data: sanitize(fresh ?? report, false),
     });
   } catch (err) {
     // Hapus gambar yang sudah terunggah jika proses pembuatan gagal.
@@ -357,6 +417,7 @@ export const updateReport = async (req, res, next) => {
     }
 
     const body = req.body ?? {};
+    const staff = isStaff(req.user);
 
     if (
       body.status === "selesai" &&
@@ -498,6 +559,9 @@ export const updateReport = async (req, res, next) => {
       }
     }
 
+    // Analisis foto baru sebelum diunggah.
+    const analyses = await analyzeFiles(files);
+
     // Upload gambar baru ke Cloudinary.
     for (const file of files) {
       const image = await uploadFiles(file, "reports");
@@ -507,7 +571,31 @@ export const updateReport = async (req, res, next) => {
     // Simpan gambar yang tersisa beserta gambar baru.
     report.images = [...remaining, ...uploadedImages];
 
+    // Metadata forensik ikut diperbarui; foto yang dihapus dibuang dari metadata.
+    const keptIds = new Set(remaining.map((i) => i.public_id));
+    const keptPhotos = (report.validation?.photos ?? [])
+      .filter((p) => keptIds.has(p.public_id))
+      .map((p) => (typeof p.toObject === "function" ? p.toObject() : p));
+    report.set("validation.photos", [...keptPhotos, ...toPhotoMeta(uploadedImages, analyses)]);
+
+    // Pelapor mengubah foto/lokasi: validasi diulang dan keputusan lama dibatalkan (anti-penyalahgunaan).
+    // Perubahan oleh petugas tidak memicu validasi ulang.
+    const locationChanged = body.latitude !== undefined || body.longitude !== undefined;
+    const revalidate = !staff && (files.length > 0 || locationChanged);
+    if (revalidate) {
+      report.set("validation.status", "pending");
+      report.set("validation.review", { decision: null, by: null, at: null, note: null });
+    }
+
     await report.save();
+
+    if (revalidate) {
+      try {
+        await validateReport(report._id);
+      } catch (validationError) {
+        console.error("Validasi ulang gagal:", validationError.message);
+      }
+    }
 
     // Hapus gambar dari Cloudinary setelah database berhasil disimpan.
     if (toRemove.length > 0) {
@@ -521,9 +609,11 @@ export const updateReport = async (req, res, next) => {
       }
     }
 
+    const fresh = await Report.findById(report._id).lean();
+
     return success(res, {
       message: "Laporan berhasil diperbarui",
-      data: report,
+      data: sanitize(fresh ?? report, staff),
     });
   } catch (err) {
     // Bersihkan gambar baru jika proses upload atau penyimpanan gagal.

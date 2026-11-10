@@ -40,3 +40,19 @@ export const authorize =
     }
     next();
   };
+
+// Seperti authenticate, tetapi tidak menolak request tanpa token / token salah.
+// Dipakai untuk endpoint publik yang tampilannya berbeda untuk petugas.
+export const optionalAuth = async (req, _res, next) => {
+  try {
+    const [scheme, token] = (req.headers.authorization || "").split(" ");
+    if (scheme === "Bearer" && token) {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const user = await User.findById(decoded.id);
+      if (user?.isActive) req.user = user;
+    }
+  } catch {
+    /* token tidak valid: perlakukan sebagai publik */
+  }
+  next();
+};

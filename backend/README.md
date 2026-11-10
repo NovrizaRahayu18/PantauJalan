@@ -156,7 +156,41 @@ Base URL lokal: `http://localhost:5000`
 
 Query daftar laporan dapat mencakup `page`, `limit`, `search`, `status`, `severity`, `type`, `order`, dan parameter filter lain yang didukung controller. Periksa implementasi `report.controller.js` untuk daftar parameter serta format response terkini.
 
-Pembuatan laporan menggunakan `multipart/form-data`. Field gambar bernama `images`; unggah maksimal 5 file. `latitude` dan `longitude` diperlukan untuk menyimpan lokasi laporan. File media disimpan melalui Cloudinary ketika kredensialnya tersedia.
+Pembuatan laporan menggunakan `multipart/form-data`. Field gambar bernama `images`; unggah maksimal 5 file, **hanya gambar JPG/PNG/WebP** (isi file diverifikasi lewat magic bytes, maksimal 5 MB per file). `latitude` dan `longitude` (titik yang diklik pelapor di peta) diperlukan untuk menyimpan lokasi laporan. File gambar disimpan melalui Cloudinary. FE disarankan mengirim header `X-Device-Id` (ID acak yang disimpan di perangkat) untuk anti-spam.
+
+## Validasi laporan otomatis
+
+Setiap laporan baru mendapat `validation.trustScore` (0-100) dan `validation.status`. Laporan tidak pernah dihapus otomatis; AI hanya menjadi penasihat dan keputusan akhir ada pada petugas.
+
+| `validation.status` | Arti                                                                     | Tampil di publik |
+| ------------------- | ------------------------------------------------------------------------ | :--------------: |
+| `pending`           | Baru masuk / menunggu AI                                                 |        Ya        |
+| `auto_verified`     | Skor tinggi, langsung masuk antrean kerja                                |        Ya        |
+| `needs_review`      | Perlu dicek petugas                                                      |        Ya        |
+| `flagged`           | Skor rendah / mencurigakan                                               |      Tidak       |
+| `duplicate`         | Foto sama dengan laporan lain di lokasi yang sama (`validation.duplicateOf`) |   Tidak       |
+| `approved`          | Disetujui petugas (laporan `menunggu` menjadi `diverifikasi`)            |        Ya        |
+| `rejected`          | Ditolak petugas (laporan menjadi `ditolak`)                              |      Tidak       |
+
+**Tahap 1, aturan (cepat, tanpa AI, berjalan sebelum response dikirim):** foto identik (SHA-256) dan mirip (perceptual hash dHash, diindeks agar cepat untuk ribuan laporan), laporan sejenis di titik sangat dekat (`2dsphere`), titik berada di wilayah Indonesia dan dekat jalan (OSRM, hanya jenis `jalan`), kualitas teks dan foto, serta **EXIF sebagai sinyal opsional**: GPS foto dibandingkan dengan titik peta dan waktu pengambilan dibandingkan dengan waktu kirim. Foto tanpa EXIF (screenshot, WhatsApp) tidak dihukum. Lokasi laporan tetap berasal dari `latitude`/`longitude` di body.
+
+**Tahap 2, AI vision (OpenRouter):** model gratis dicoba berurutan (`AI_VISION_MODELS`). Output teks berupa JSON: apakah ada kerusakan, kecocokan dengan deskripsi, foto layar/stok, serta saran `type` dan `severity` (disimpan di `validation.ai`, tidak mengubah laporan). Jika AI gagal 3 kali, laporan menjadi `needs_review`.
+
+**Mode AI** (`AI_VALIDATION_MODE`):
+
+- `background` (default di server biasa): AI dijalankan setelah response, dengan jeda antar-laporan agar tidak melebihi rate limit.
+- `queue` (default di Vercel, karena proses setelah response tidak dijamin berjalan): laporan ditandai `validation.ai.status = "pending"` dan diproses oleh `GET|POST /api/validation/process`. Panggil dari Vercel Cron dengan `CRON_SECRET`, atau dari tombol "Proses antrean" di dashboard petugas. Naikkan `maxDuration` fungsi karena satu panggilan AI bisa beberapa detik.
+- `inline`: AI dijalankan sebelum response (lambat, tidak disarankan).
+
+| Method  | Endpoint                         | Akses                       | Keterangan                                                                 |
+| ------- | -------------------------------- | --------------------------- | -------------------------------------------------------------------------- |
+| `GET`   | `/api/reports?validation=...`    | Petugas/Admin               | Filter antrean, mis. `needs_review`. Petugas melihat juga laporan tersembunyi. |
+| `PATCH` | `/api/reports/:id/validation`    | Petugas/Admin               | Body `{decision: "approved"\|"rejected"\|"duplicate", note?, duplicateOf?}`. |
+| `POST`  | `/api/reports/:id/validation/run`| Petugas/Admin               | Jalankan ulang aturan + AI (`?force=true` untuk menimpa keputusan petugas). |
+| `GET/POST` | `/api/validation/process?limit=3` | Petugas/Admin atau `CRON_SECRET` | Proses antrean AI.                                                    |
+| `GET`   | `/api/validation/stats`          | Petugas/Admin               | Jumlah laporan per status validasi dan antrean AI.                         |
+
+Respons untuk masyarakat hanya memuat `validation.status`; petugas juga mendapat `trustScore`, `checks` (alasan tiap penilaian), dan hasil `ai`. Data forensik foto (hash, GPS EXIF) dan jejak pengirim tidak pernah dikirim ke klien. Menjalankan tes logika: `npm test`.
 
 ### Repair progress — `/api/reports` dan `/api/progress`
 

@@ -9,7 +9,7 @@ export const errorHandler = (err, _req, res, _next) => {
     const map = {
       LIMIT_FILE_SIZE: "Ukuran gambar maksimal 5 MB",
       LIMIT_FILE_COUNT: "Jumlah gambar maksimal 5",
-      LIMIT_UNEXPECTED_FILE: "Jenis File tidak diperbolehkan. Hanya gambar, dokumen, video, dan audio yang diperbolehkan",
+      LIMIT_UNEXPECTED_FILE: "Jenis file tidak diperbolehkan. Hanya gambar (JPG, PNG, WebP) yang diperbolehkan",
     };
     return error(res, { message: map[err.code] || err.message, statusCode: 400 });
   }
@@ -28,5 +28,8 @@ export const errorHandler = (err, _req, res, _next) => {
   }
 
   console.error(err);
-  return error(res, { message: err.message || "Terjadi kesalahan pada server" });
+  return error(res, {
+    message: err.message || "Terjadi kesalahan pada server",
+    statusCode: err.statusCode || 500,
+  });
 };
