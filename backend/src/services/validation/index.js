@@ -49,7 +49,7 @@ export const runRuleValidation = async (reportId) => {
   return updated;
 };
 
-// Analisis AI untuk laporan yang sudah di-claim (status ai = processing).
+/** Tahap 2: analisis AI untuk laporan yang sudah di-claim (status ai = processing). */
 const processClaimed = async (report) => {
   const id = report._id;
   const attempts = report.validation?.ai?.attempts ?? 1;
@@ -125,7 +125,7 @@ const processClaimed = async (report) => {
   }
 };
 
-// Claim atomik satu laporan tertentu.
+/** Claim atomik satu laporan tertentu. */
 export const runAiValidation = async (reportId) => {
   const claimed = await Report.findOneAndUpdate(
     { _id: reportId, "validation.ai.status": "pending", "validation.status": { $nin: LOCKED } },
@@ -172,7 +172,7 @@ export const processPending = async ({ limit = 3, budgetMs = 8000 } = {}) => {
 // Antrean dalam proses untuk mode "background" (server yang terus hidup, bukan serverless).
 let chain = Promise.resolve();
 
-// Jadwalkan AI sesuai mode. Mengembalikan Promise hanya untuk mode "inline".
+/** Jadwalkan AI sesuai mode. Mengembalikan Promise hanya untuk mode "inline". */
 export const scheduleAi = (reportId) => {
   const mode = VCFG.ai.mode;
   if (mode === "inline") return runAiValidation(reportId).catch((e) => console.error("AI validasi gagal:", e.message));
@@ -185,13 +185,13 @@ export const scheduleAi = (reportId) => {
   return null; // "queue": diproses lewat /api/validation/process
 };
 
-// Validasi lengkap untuk laporan baru/diubah: aturan dulu, lalu AI sesuai mode.
+/** Validasi lengkap untuk laporan baru/diubah: aturan dulu, lalu AI sesuai mode. */
 export const validateReport = async (reportId) => {
   await runRuleValidation(reportId);
   await scheduleAi(reportId);
 };
 
-// Jalankan ulang penuh (petugas). AI dijalankan langsung, tidak lewat antrean.
+/** Jalankan ulang penuh (petugas). AI dijalankan langsung, tidak lewat antrean. */
 export const rerunValidation = async (reportId, { force = false } = {}) => {
   const current = await Report.findById(reportId).select("validation.status").lean();
   if (!current) return null;
