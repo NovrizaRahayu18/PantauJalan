@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { uploadReportImages, verifyImageFiles } from "../middlewares/upload.js";
+import { uploadReportImages, verifyMediaFiles } from "../middlewares/upload.js";
 import { authenticate, authorize, optionalAuth } from "../middlewares/auth.js";
 import { submissionLimit } from "../middlewares/submissionLimit.js";
 import {
@@ -26,8 +26,8 @@ router.post("/:id/validation/run", authenticate, staff, runValidation);
 
 // POST anonim: submissionLimit sebelum upload agar spam ditolak sebelum file diproses.
 // PUT/DELETE: authenticate sebelum upload agar request tanpa token tidak memproses file.
-router.post("/", submissionLimit, uploadReportImages, verifyImageFiles, createReport);
-router.put("/:id", authenticate, uploadReportImages, verifyImageFiles, updateReport);
+router.post("/", submissionLimit, uploadReportImages, verifyMediaFiles, createReport);
+router.put("/:id", authenticate, uploadReportImages, verifyMediaFiles, updateReport);
 router.delete("/:id", authenticate, deleteReport);
 
 export default router;

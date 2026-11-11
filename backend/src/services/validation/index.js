@@ -6,6 +6,7 @@ import { runRules } from "./rules.js";
 import { analyzeWithAI } from "./aiVision.js";
 import { aiChecks, computeScore, decideStatus, isAiCheck } from "./scoring.js";
 import { mk } from "./checks.js";
+import { isAiImage } from "../../utils/media.js"; 
 
 const LOCKED = ["approved", "rejected"]; // keputusan petugas
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -22,7 +23,7 @@ export const runRuleValidation = async (reportId) => {
   if (LOCKED.includes(report.validation?.status)) return report;
 
   const { checks, duplicateOf } = await runRules(report);
-  const hasImages = (report.images?.length ?? 0) > 0;
+  const hasImages = (report.images ?? []).some(isAiImage);
   const useAi = VCFG.ai.enabled && hasImages && !checks.some((c) => c.hard);
   const status = decideStatus({ checks, hasImages, aiPending: useAi });
 
@@ -58,7 +59,7 @@ const processClaimed = async (report) => {
   try {
     const ai = await analyzeWithAI(
       report,
-      (report.images ?? []).map((i) => i.url).filter(Boolean)
+      (report.images ?? []).filter(isAiImage).map((i) => i.url).filter(Boolean)
     );
     const checks = [...baseChecks, ...aiChecks(ai)];
     await Report.updateOne(

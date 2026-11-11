@@ -10,6 +10,7 @@ import { resolveLocation } from "../services/geoCode.js";
 import { deleteFiles, uploadFiles } from "../utils/cloudinaryUpload.js";
 import { analyzeImage } from "../services/validation/imageTools.js";
 import { validateReport } from "../services/validation/index.js";
+import { isAiImageMime } from "../utils/media.js"; 
 
 const STAFF_ROLES = ["admin", "petugas"];
 const canManage = (user, report) =>
@@ -35,10 +36,12 @@ const LIST_SELECT_STAFF = "-submitter -validation.photos";
 const LIST_SELECT_PUBLIC =
   "-submitter -validation.photos -validation.checks -validation.ai -validation.review -validation.duplicateOf -validation.trustScore -validation.duplicateCount";
 
-// Siapkan metadata forensik foto (hash, EXIF) dari buffer sebelum buffer dibuang.
-const analyzeFiles = (files = []) => Promise.all(files.map((f) => analyzeImage(f.buffer)));
+// Hanya gambar JPG/PNG/WebP yang dianalisis; audio/video menghasilkan null (urutan tetap sejajar
+// dengan files) dan tidak masuk ke validation.photos.
+const analyzeFiles = (files = []) =>
+  Promise.all(files.map((f) => (isAiImageMime(f.mimetype) ? analyzeImage(f.buffer) : null)));
 const toPhotoMeta = (uploaded, analyses) =>
-  uploaded.map((img, i) => ({ public_id: img.public_id, ...analyses[i] }));
+  uploaded.flatMap((img, i) => (analyses[i] ? [{ public_id: img.public_id, ...analyses[i] }] : []));
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const REGION_FIELDS = ["street", "village", "district", "regency", "province"];
 
