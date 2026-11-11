@@ -10,7 +10,12 @@ import { mk } from "./checks.js";
 const LOCKED = ["approved", "rejected"]; // keputusan petugas
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Tahap 1: pemeriksaan aturan. Cepat; aman dipanggil sebelum response dikirim. */
+// Laporan yang lolos otomatis langsung berstatus "diverifikasi" (alur perbaikan), tanpa perlu
+// disetujui petugas satu per satu. Hanya menyentuh laporan yang masih "menunggu", jadi status
+// yang sudah diubah petugas (diproses, selesai, ditolak, dst.) tidak pernah ditimpa.
+const markVerified = (id) => Report.updateOne({ _id: id, status: "menunggu" }, { $set: { status: "diverifikasi" } });
+
+// Pemeriksaan aturan. Cepat; aman dipanggil sebelum response dikirim.
 export const runRuleValidation = async (reportId) => {
   const report = await Report.findById(reportId).lean();
   if (!report) return null;
@@ -36,13 +41,15 @@ export const runRuleValidation = async (reportId) => {
     { new: true }
   ).lean();
 
+  if (status === "auto_verified") await markVerified(reportId);
+
   if (status === "duplicate" && duplicateOf && report.validation?.status !== "duplicate") {
     await Report.updateOne({ _id: duplicateOf }, { $inc: { "validation.duplicateCount": 1 } });
   }
   return updated;
 };
 
-/** Tahap 2: analisis AI untuk laporan yang sudah di-claim (status ai = processing). */
+// Analisis AI untuk laporan yang sudah di-claim (status ai = processing).
 const processClaimed = async (report) => {
   const id = report._id;
   const attempts = report.validation?.ai?.attempts ?? 1;
@@ -79,10 +86,13 @@ const processClaimed = async (report) => {
         },
       }
     );
-    await Report.updateOne(
+    const finalStatus = decideStatus({ checks, hasImages: true });
+    const res = await Report.updateOne(
       { _id: id, "validation.status": { $nin: LOCKED } },
-      { $set: { "validation.status": decideStatus({ checks, hasImages: true }) } }
+      { $set: { "validation.status": finalStatus } }
     );
+    // matchedCount 0 = petugas sudah memutuskan di sela-sela proses AI, jangan ubah apa pun.
+    if (finalStatus === "auto_verified" && res.matchedCount > 0) await markVerified(id);
     return { id, ai: "done" };
   } catch (err) {
     const message = String(err.message || err).slice(0, 500);
@@ -115,7 +125,7 @@ const processClaimed = async (report) => {
   }
 };
 
-/** Claim atomik satu laporan tertentu. */
+// Claim atomik satu laporan tertentu.
 export const runAiValidation = async (reportId) => {
   const claimed = await Report.findOneAndUpdate(
     { _id: reportId, "validation.ai.status": "pending", "validation.status": { $nin: LOCKED } },
@@ -162,7 +172,7 @@ export const processPending = async ({ limit = 3, budgetMs = 8000 } = {}) => {
 // Antrean dalam proses untuk mode "background" (server yang terus hidup, bukan serverless).
 let chain = Promise.resolve();
 
-/** Jadwalkan AI sesuai mode. Mengembalikan Promise hanya untuk mode "inline". */
+// Jadwalkan AI sesuai mode. Mengembalikan Promise hanya untuk mode "inline".
 export const scheduleAi = (reportId) => {
   const mode = VCFG.ai.mode;
   if (mode === "inline") return runAiValidation(reportId).catch((e) => console.error("AI validasi gagal:", e.message));
@@ -175,13 +185,13 @@ export const scheduleAi = (reportId) => {
   return null; // "queue": diproses lewat /api/validation/process
 };
 
-/** Validasi lengkap untuk laporan baru/diubah: aturan dulu, lalu AI sesuai mode. */
+// Validasi lengkap untuk laporan baru/diubah: aturan dulu, lalu AI sesuai mode.
 export const validateReport = async (reportId) => {
   await runRuleValidation(reportId);
   await scheduleAi(reportId);
 };
 
-/** Jalankan ulang penuh (petugas). AI dijalankan langsung, tidak lewat antrean. */
+// Jalankan ulang penuh (petugas). AI dijalankan langsung, tidak lewat antrean.
 export const rerunValidation = async (reportId, { force = false } = {}) => {
   const current = await Report.findById(reportId).select("validation.status").lean();
   if (!current) return null;
