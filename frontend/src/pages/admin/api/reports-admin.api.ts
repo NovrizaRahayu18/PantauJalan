@@ -4,6 +4,7 @@ import type {
   ReportListResponse,
   ReportStatus,
   ReportSummaryResponse,
+  ValidationStatus,
 } from "../../client/reports/types/reports.types";
 
 export type AdminProgress = {
@@ -36,6 +37,7 @@ export async function getAdminReports(
     status?: ReportStatus;
     severity?: string;
     today?: boolean;
+    validation?: ValidationStatus;
   } = {},
 ) {
   const response = await api.get<ReportListResponse>("/reports", {
@@ -46,6 +48,7 @@ export async function getAdminReports(
       ...(params.status ? { status: params.status } : {}),
       ...(params.severity ? { severity: params.severity } : {}),
       ...(params.today ? { today: params.today } : {}),
+      ...(params.validation ? { validation: params.validation } : {}),
     },
   });
   return response.data;
@@ -58,6 +61,45 @@ export async function getAdminReportById(reportId: string) {
 
 export async function getAdminReportSummary() {
   const response = await api.get<ReportSummaryResponse>("/reports/summary");
+  return response.data;
+}
+
+export type ValidationStatusStat = {
+  total: number;
+  status: ValidationStatus;
+};
+
+export type ValidationStatsResponse = {
+  success: boolean;
+  message: string;
+  data: {
+    byStatus: ValidationStatusStat[];
+    byAi?: {
+      total: number;
+      status: string | null;
+    }[];
+    aiEnabled?: boolean;
+    aiMode?: string;
+    models?: string[];
+  };
+};
+
+export async function getValidationStats(): Promise<ValidationStatsResponse> {
+  const response = await api.get<ValidationStatsResponse>("/validation/stats");
+  return response.data;
+}
+
+export type UpdateValidationPayload = {
+  decision: "approved" | "rejected" | "duplicate";
+  note?: string;
+  duplicateOf?: string;
+};
+
+export async function updateAdminReportValidation(
+  reportId: string,
+  payload: UpdateValidationPayload,
+) {
+  const response = await api.patch(`/reports/${reportId}/validation`, payload);
   return response.data;
 }
 
