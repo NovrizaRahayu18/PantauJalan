@@ -24,6 +24,7 @@ import Swal from "sweetalert2";
 import {
   getAdminReports,
   getValidationStats,
+  processValidationQueue,
   updateAdminReportValidation,
   type ValidationStatusStat,
 } from "../../api/reports-admin.api";
@@ -158,6 +159,7 @@ export default function AdminReportListPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [validationStats, setValidationStats] = useState<ValidationStatusStat[]>([]);
   const [statsLoading, setStatsLoading] = useState(true);
+  const [isInitialProcessing, setIsInitialProcessing] = useState(true);
 
   // State untuk modal update validasi
   const [validationModalReport, setValidationModalReport] = useState<ReportItem | null>(null);
@@ -165,6 +167,28 @@ export default function AdminReportListPage() {
   const [decisionNote, setDecisionNote] = useState("");
   const [duplicateOfId, setDuplicateOfId] = useState("");
   const [isSubmittingValidation, setIsSubmittingValidation] = useState(false);
+
+  // Jalankan pemrosesan AI validasi antrean pertama kali sebelum menampilkan konten
+  useEffect(() => {
+    let cancelled = false;
+
+    async function processAiQueue() {
+      try {
+        await processValidationQueue(5);
+      } catch (err) {
+        console.warn("Proses antrean validasi AI dilewati atau gagal:", err);
+      } finally {
+        if (!cancelled) {
+          setIsInitialProcessing(false);
+        }
+      }
+    }
+
+    void processAiQueue();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleOpenValidationModal = (report: ReportItem) => {
     setValidationModalReport(report);
@@ -249,6 +273,7 @@ export default function AdminReportListPage() {
   };
 
   useEffect(() => {
+    if (isInitialProcessing) return;
     let cancelled = false;
     async function loadStats() {
       setStatsLoading(true);
@@ -267,7 +292,7 @@ export default function AdminReportListPage() {
     return () => {
       cancelled = true;
     };
-  }, [reloadKey]);
+  }, [isInitialProcessing, reloadKey]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -277,6 +302,7 @@ export default function AdminReportListPage() {
     return () => window.clearTimeout(timer);
   }, [search]);
   useEffect(() => {
+    if (isInitialProcessing) return;
     let cancelled = false;
     async function load() {
       setLoading(true);
@@ -305,7 +331,44 @@ export default function AdminReportListPage() {
     return () => {
       cancelled = true;
     };
-  }, [page, debouncedSearch, status, severity, validation, reloadKey]);
+  }, [isInitialProcessing, page, debouncedSearch, status, severity, validation, reloadKey]);
+
+  if (isInitialProcessing) {
+    return (
+      <div className="space-y-6">
+        <section className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
+              Pusat pengelolaan
+            </p>
+            <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
+              Laporan Pengaduan
+            </h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+              Tinjau laporan masyarakat, periksa tingkat kerusakan, dan kelola
+              progres penanganan.
+            </p>
+          </div>
+        </section>
+
+        <section className="flex min-h-[380px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white p-8 text-center shadow-xs">
+          <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700 ring-8 ring-emerald-50/50">
+            <Sparkles size={28} className="animate-pulse text-emerald-600" />
+          </div>
+          <h3 className="mt-5 text-base font-bold text-slate-900">
+            Memproses Validasi AI...
+          </h3>
+          <p className="mt-2 max-w-md text-xs leading-5 text-slate-500">
+            Sistem sedang memeriksa dan memproses antrean validasi otomatis serta analisis foto sebelum memuat konten laporan.
+          </p>
+          <div className="mt-6 flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50/70 px-4 py-2 text-xs font-semibold text-emerald-800">
+            <LoaderCircle size={15} className="animate-spin text-emerald-700" />
+            <span>Mohon tunggu sebentar...</span>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

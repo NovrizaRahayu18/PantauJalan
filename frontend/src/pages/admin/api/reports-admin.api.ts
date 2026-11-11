@@ -89,6 +89,25 @@ export async function getValidationStats(): Promise<ValidationStatsResponse> {
   return response.data;
 }
 
+export type ProcessValidationResponse = {
+  success: boolean;
+  message: string;
+  data?: unknown;
+};
+
+export async function processValidationQueue(
+  limit: number = 5,
+): Promise<ProcessValidationResponse> {
+  const response = await api.get<ProcessValidationResponse>(
+    "/validation/process",
+    {
+      params: { limit },
+      timeout: 30000,
+    },
+  );
+  return response.data;
+}
+
 export type UpdateValidationPayload = {
   decision: "approved" | "rejected" | "duplicate";
   note?: string;
