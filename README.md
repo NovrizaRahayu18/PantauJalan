@@ -88,6 +88,7 @@ Area admin/petugas menyediakan fitur untuk:
 - Mengelola tindak lanjut dan status laporan.
 - Menambahkan serta memperbarui progres perbaikan.
 - Mengunggah dokumentasi proses penanganan.
+- Meninjau hasil validasi otomatis dan menentukan keputusan akhir laporan.
 - Mengelola pengguna sesuai hak akses.
 
 ### 6. Dukungan Multibahasa
@@ -97,6 +98,83 @@ Antarmuka menyediakan pilihan bahasa:
 - Bahasa Indonesia.
 - English.
 - Cakap Medan.
+
+### 7. Validasi Laporan Otomatis dengan AI
+
+Setiap laporan baru dinilai secara otomatis agar petugas dapat berfokus pada laporan yang benar benar membutuhkan perhatian. AI hanya berperan sebagai penasihat. Laporan tidak pernah dihapus otomatis dan keputusan akhir tetap berada pada petugas.
+
+Penilaian berjalan dalam dua tahap dan menghasilkan `validation.trustScore` (0 sampai 100, skor dasar 50) serta `validation.status`.
+
+**Tahap 1, pemeriksaan aturan (tanpa AI, berjalan sebelum response dikirim):**
+
+| Pemeriksaan | Dampak skor |
+|---|---|
+| Foto identik (SHA 256) atau sangat mirip (perceptual hash dHash) dengan laporan lain di lokasi yang sama | Ditandai `duplicate` |
+| Foto yang sama dipakai pada laporan di lokasi berbeda | -50 |
+| Laporan sejenis di titik yang sangat dekat | -10 |
+| Koordinat di luar wilayah Indonesia atau tanpa koordinat | Ditandai `flagged` |
+| Titik laporan jenis `jalan` jauh dari jalan terdekat (OSRM) | -20 (dekat jalan: +5) |
+| GPS EXIF foto cocok dengan titik laporan | +15 (selisih besar: -25) |
+| Waktu pengambilan foto baru (EXIF) | +10 (terlalu lama: -25) |
+| Metadata menunjukkan foto diedit atau dihasilkan software | -20 |
+| Tanpa foto, foto tidak terbaca, atau resolusi terlalu kecil | -15 sampai -10 |
+| Deskripsi terlalu singkat atau berisi karakter berulang | -10 sampai -15 |
+
+EXIF hanya menjadi sinyal tambahan. Foto tanpa EXIF (misalnya dari WhatsApp atau screenshot) tidak dihukum, dan lokasi laporan tetap berasal dari titik yang dipilih pelapor di peta.
+
+**Tahap 2, analisis AI vision melalui [OpenRouter](https://openrouter.ai/):**
+
+Foto diperkecil lalu dikirim ke model vision. Model dicoba berurutan sesuai `AI_VISION_MODELS`, dan jika sebuah model gagal, sistem lanjut ke model berikutnya. Model mengembalikan JSON berisi:
+
+- Apakah kerusakan terlihat pada foto.
+- Kesesuaian foto dengan judul dan deskripsi.
+- Apakah foto berupa foto layar, gambar stok, atau tidak relevan.
+- Saran `type` dan `severity` (hanya disimpan di `validation.ai`, tidak mengubah laporan).
+- Tingkat keyakinan (`confidence`) dan alasan singkat.
+
+| Hasil AI | Dampak skor |
+|---|---|
+| Kerusakan terkonfirmasi | +25 |
+| Kerusakan tidak terlihat | -45 |
+| Foto tidak relevan atau stok | -40 |
+| Foto tidak sesuai deskripsi | -15 |
+| Foto hasil foto layar | -10 |
+| Keyakinan di bawah `AI_MIN_CONFIDENCE` | 0, perlu dicek petugas |
+
+**Status validasi:**
+
+| `validation.status` | Arti | Tampil di publik |
+|---|---|:---:|
+| `pending` | Baru masuk atau menunggu AI | Ya |
+| `auto_verified` | Skor mencapai batas otomatis, laporan `menunggu` langsung menjadi `diverifikasi` | Ya |
+| `needs_review` | Skor menengah atau AI gagal, perlu dicek petugas | Ya |
+| `flagged` | Skor rendah atau mencurigakan | Tidak |
+| `duplicate` | Duplikat laporan lain (`validation.duplicateOf`) | Tidak |
+| `approved` | Disetujui petugas | Ya |
+| `rejected` | Ditolak petugas, laporan menjadi `ditolak` | Tidak |
+
+Secara default skor 70 ke atas menjadi `auto_verified`, skor 40 sampai 69 menjadi `needs_review`, dan di bawah 40 menjadi `flagged`. Ambang ini dapat diubah melalui `VALIDATION_AUTO_VERIFY_MIN` dan `VALIDATION_REVIEW_MIN`.
+
+**Keamanan dan ketahanan:**
+
+- Teks laporan diperlakukan sebagai data, bukan perintah, dan instruksi apa pun di dalam foto atau teks laporan diabaikan oleh model.
+- Jika AI gagal setelah 3 percobaan, laporan tidak pernah menjadi `auto_verified` dan dialihkan ke `needs_review`.
+- Hanya gambar JPG, PNG, dan WebP yang dianalisis. Audio dan video hanya diunggah sebagai dokumentasi.
+- Keputusan petugas (`approved` atau `rejected`) tidak pernah ditimpa oleh proses otomatis.
+- Pengirim laporan dibatasi per jam (`VALIDATION_MAX_PER_HOUR`, default 10 per device dan 3 kali lipat per IP) dan akan menerima respons `429` jika melebihi batas. IP disimpan dalam bentuk hash bersalt.
+- Masyarakat hanya menerima `validation.status`. Skor, daftar pemeriksaan, hasil AI, hash foto, dan GPS EXIF hanya tersedia bagi petugas atau tidak dikirim sama sekali.
+
+**Mode pemrosesan AI** (`AI_VALIDATION_MODE`):
+
+| Mode | Perilaku |
+|---|---|
+| `background` | Default di server biasa. AI berjalan setelah response dengan jeda antar laporan agar tidak melewati rate limit. |
+| `queue` | Default di Vercel. Laporan ditandai `pending` lalu diproses lewat `GET` atau `POST /api/validation/process`, yang dapat dipanggil Cron dengan `CRON_SECRET` atau dari dashboard petugas. |
+| `inline` | AI berjalan sebelum response dikirim. Lambat dan tidak disarankan. |
+
+Jika `OPENROUTER_API_KEY` kosong, tahap AI dilewati dan pemeriksaan aturan tetap berjalan.
+
+**Peran petugas pada validasi:** memfilter antrean (misalnya `needs_review`), menyetujui, menolak, atau menandai duplikat sebuah laporan, menjalankan ulang validasi, memproses antrean AI, serta melihat statistik validasi dari dashboard.
 
 ---
 
@@ -133,6 +211,8 @@ Antarmuka menyediakan pilihan bahasa:
 | [Cloudinary](https://cloudinary.com/) | Penyimpanan dan pengelolaan media. |
 | [OSRM](https://project-osrm.org/) | Perhitungan rute. |
 | [OpenStreetMap](https://www.openstreetmap.org/) | Sumber data geografis. |
+| [OpenRouter](https://openrouter.ai/) | Akses model AI vision untuk validasi foto laporan. |
+| [Sharp](https://sharp.pixelplumbing.com/) | Pemrosesan gambar: perkecil untuk AI, perceptual hash, dan pembacaan metadata EXIF. |
 
 ---
 
@@ -149,6 +229,7 @@ flowchart TB
     API --> MEDIA["Cloudinary<br/>Media Storage"]
     API --> GEO["OpenStreetMap<br/>Geographic Data"]
     API --> ROUTE["OSRM<br/>Route Engine"]
+    API --> AI["OpenRouter<br/>AI Vision"]
 ```
 
 ### Alur Utama Aplikasi
@@ -168,6 +249,8 @@ flowchart TD
     B --> K["Informasi laporan ditampilkan pada peta dan statistik"]
 ```
 
+> Setelah laporan tersimpan, sistem menjalankan validasi otomatis (aturan dan AI). Laporan dengan skor tinggi langsung berstatus `diverifikasi`, sedangkan laporan yang meragukan masuk antrean tinjauan petugas. Lihat bagian [Validasi Laporan Otomatis dengan AI](#7-validasi-laporan-otomatis-dengan-ai).
+
 ## Struktur Repository
 
 ```text
@@ -176,14 +259,15 @@ PantauJalan/
 │   ├── src/
 │   │   ├── config/          # Konfigurasi database dan Cloudinary
 │   │   ├── controllers/     # Handler endpoint API
-│   │   ├── middlewares/     # Auth, upload, dan error handling
+│   │   ├── middlewares/     # Auth, upload, pembatas kiriman, dan error handling
 │   │   ├── models/          # Model User, Report, RepairProgress
 │   │   ├── routes/          # Definisi route API
 │   │   ├── seeds/           # Seed akun admin
-│   │   ├── services/        # Geocoding dan routing
+│   │   ├── services/        # Geocoding, routing, dan validasi laporan (aturan dan AI)
 │   │   ├── utils/           # Helper dan utilitas
 │   │   ├── app.js
 │   │   └── server.js
+│   ├── tests/               # Tes logika validasi dan media (npm test)
 │   ├── .env.example
 │   ├── package.json
 │   └── README.md
@@ -221,6 +305,7 @@ Pastikan perangkat sudah memiliki:
 - MongoDB lokal atau MongoDB Atlas.
 - Akun Cloudinary untuk penyimpanan media.
 - Koneksi internet untuk layanan peta dan routing.
+- (Opsional) API key OpenRouter untuk validasi foto otomatis dengan AI.
 
 ### 1. Clone Repository
 
@@ -263,6 +348,9 @@ ADMIN_PASSWORD=change_this_password
 CLOUDINARY_CLOUD_NAME=your_cloud_name
 CLOUDINARY_API_KEY=your_api_key
 CLOUDINARY_API_SECRET=your_api_secret
+
+# Opsional: kosong berarti tahap AI dilewati
+OPENROUTER_API_KEY=your_openrouter_api_key
 ```
 
 Buat akun admin awal:
@@ -343,6 +431,21 @@ Konfigurasi lengkap tersedia pada `backend/.env.example`.
 | `OSRM_FOOT_PROFILE` | Profil routing pejalan kaki. |
 | `OSRM_TIMEOUT_MS` | Timeout request OSRM. |
 | `ROUTING_*` | Pengaturan penghindaran hazard dan alternatif rute. |
+| `OPENROUTER_API_KEY` | Kunci OpenRouter. Kosong berarti tahap AI dilewati. |
+| `AI_VALIDATION_ENABLED` | Mengaktifkan atau menonaktifkan validasi AI. |
+| `AI_VISION_MODELS` | Daftar model vision yang dicoba berurutan (nilai default ada di `.env.example`). |
+| `AI_TIMEOUT_MS` | Batas waktu satu panggilan model. |
+| `AI_MAX_IMAGES` | Jumlah maksimal foto per laporan yang dikirim ke AI. |
+| `AI_MIN_CONFIDENCE` | Batas keyakinan minimum agar hasil AI dipakai dalam penilaian. |
+| `AI_VALIDATION_MODE` | Mode pemrosesan AI: `inline`, `background`, atau `queue`. |
+| `CRON_SECRET` | Rahasia agar Cron dapat memanggil `/api/validation/process`. |
+| `VALIDATION_AUTO_VERIFY_MIN` | Skor minimum untuk status `auto_verified`. |
+| `VALIDATION_REVIEW_MIN` | Skor minimum untuk status `needs_review`. |
+| `VALIDATION_MAX_PER_HOUR` | Batas laporan per device per jam (per IP 3 kali lipat). |
+| `VALIDATION_DUP_IMAGE_RADIUS_M` | Radius foto sama dianggap duplikat. |
+| `VALIDATION_EXIF_MATCH_M` | Selisih GPS foto dan titik laporan yang dianggap cocok. |
+| `VALIDATION_ROAD_MAX_M` | Jarak maksimal titik laporan jenis jalan dari jalan terdekat. |
+| `UPLOAD_MAX_IMAGE_MB`, `UPLOAD_MAX_AUDIO_MB`, `UPLOAD_MAX_VIDEO_MB` | Batas ukuran upload per jenis file. |
 
 ### Frontend
 
@@ -369,6 +472,9 @@ http://localhost:5000
 | Reports | `/api/reports` | Pengaduan, detail laporan, dan statistik. |
 | Progress | `/api/reports/:reportId/progress` dan `/api/progress` | Dokumentasi serta timeline penanganan. |
 | Routes | `/api/routes` | Data titik kerusakan dan perhitungan rute aman. |
+| Validation | `/api/validation` | Memproses antrean AI dan statistik validasi (petugas/admin atau `CRON_SECRET`). |
+
+Endpoint validasi pada laporan: `PATCH /api/reports/:id/validation` untuk keputusan petugas dan `POST /api/reports/:id/validation/run` untuk menjalankan ulang validasi.
 
 Untuk detail endpoint, request body, response, serta cara menjalankan masing-masing aplikasi, lihat dokumentasi:
 
@@ -382,8 +488,8 @@ Untuk detail endpoint, request body, response, serta cara menjalankan masing-mas
 | Role | Deskripsi |
 |---|---|
 | `masyarakat` | Membuat laporan dan memantau informasi penanganan. |
-| `petugas` | Memeriksa laporan dan memperbarui progres penanganan. |
-| `admin` | Mengelola pengguna serta memiliki akses pengelolaan laporan dan penanganan. |
+| `petugas` | Memeriksa laporan, meninjau hasil validasi otomatis, dan memperbarui progres penanganan. |
+| `admin` | Mengelola pengguna serta memiliki akses pengelolaan laporan, validasi, dan penanganan. |
 
 Hak akses tetap diperiksa oleh backend melalui middleware autentikasi dan otorisasi.
 
@@ -395,6 +501,10 @@ Hak akses tetap diperiksa oleh backend melalui middleware autentikasi dan otoris
 - Perhitungan rute dilakukan melalui backend menggunakan OSRM.
 - Rute alternatif mempertimbangkan laporan kerusakan berdasarkan aturan konfigurasi routing.
 - Akurasi informasi kondisi jalan bergantung pada kualitas data laporan dan data peta yang tersedia.
+- Validasi laporan berjalan dua tahap: pemeriksaan aturan lalu analisis AI vision melalui OpenRouter.
+- Status validasi terpisah dari status alur perbaikan laporan.
+- Laporan berstatus `flagged`, `duplicate`, dan `rejected` disembunyikan dari tampilan publik.
+- Menjalankan tes logika validasi dan media: `npm test` di folder `backend`.
 
 ## Kontribusi
 
