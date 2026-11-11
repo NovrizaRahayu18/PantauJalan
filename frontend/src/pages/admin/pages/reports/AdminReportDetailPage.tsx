@@ -9,6 +9,7 @@ import {
   Pencil,
   Plus,
   Save,
+  ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
@@ -921,6 +922,60 @@ export default function AdminReportDetailPage() {
                       </p>
                     </div>
                   </div>
+
+                  {/* Status Validasi & Review Note */}
+                  <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck size={16} className="text-emerald-700" />
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                          Validasi Sistem
+                        </span>
+                      </div>
+                      {report.validation?.status && (
+                        <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 capitalize ring-1 ring-slate-200">
+                          {report.validation.status}
+                        </span>
+                      )}
+                    </div>
+
+                    {report.validation?.review?.note ? (
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-800">
+                          <FileText size={14} />
+                          <span>Catatan Tinjauan (Review Note):</span>
+                        </div>
+                        <p className="mt-1.5 text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">
+                          "{report.validation.review.note}"
+                        </p>
+                        <div className="mt-2.5 flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
+                          {report.validation.review.decision && (
+                            <span>
+                              Keputusan:{" "}
+                              <strong className="capitalize text-slate-700">
+                                {report.validation.review.decision}
+                              </strong>
+                            </span>
+                          )}
+                          {report.validation.review.at && (
+                            <span>• Ditinjau pada {dateLabel(report.validation.review.at)}</span>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-slate-200 bg-white p-3 text-xs text-slate-400">
+                        Belum ada catatan tinjauan (review note) untuk laporan ini.
+                      </div>
+                    )}
+
+                    {report.validation?.ai?.reason && (
+                      <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">
+                        <span className="font-semibold text-slate-700">Analisis AI:</span>{" "}
+                        {report.validation.ai.reason}
+                      </div>
+                    )}
+                  </div>
+
                   <button
                     onClick={startEditReport}
                     className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 px-4 py-2.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-50"
