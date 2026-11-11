@@ -43,6 +43,58 @@ export type ReportStatus =
   | "selesai"
   | "ditolak";
 
+export type ValidationStatus =
+  | "auto_verified"
+  | "flagged"
+  | "duplicate"
+  | "needs_review"
+  | "approved"
+  | "rejected"
+  | "pending";
+
+export interface ReportValidationCheck {
+  code: string;
+  label: string;
+  impact?: number;
+  detail?: string | null;
+  hard?: string;
+}
+
+export interface ReportValidationAI {
+  status?: string | null;
+  attempts?: number;
+  model?: string | null;
+  lockedAt?: string | null;
+  error?: string | null;
+  damageVisible?: boolean | null;
+  suggestedType?: string | null;
+  suggestedSeverity?: string | null;
+  matchesDescription?: boolean | null;
+  isScreenshot?: boolean | null;
+  isUnrelated?: boolean | null;
+  confidence?: number | null;
+  reason?: string | null;
+  checkedAt?: string | null;
+}
+
+export interface ReportValidationReview {
+  decision?: string | null;
+  by?: string | null;
+  at?: string | null;
+  note?: string | null;
+}
+
+export interface ReportValidation {
+  status: ValidationStatus;
+  trustScore?: number;
+  duplicateOf?: string | null;
+  duplicateCount?: number;
+  checkedAt?: string;
+  checks?: ReportValidationCheck[];
+  ai?: ReportValidationAI;
+  review?: ReportValidationReview;
+}
+
 export interface ReportImage {
   _id: string;
   url: string;
@@ -57,15 +109,21 @@ export interface ReportItem {
   title: string;
   description: string;
   address: string;
+  street?: string;
+  village?: string;
+  district?: string;
+  regency?: string;
+  province?: string;
   severity: ReportSeverity;
   status: ReportStatus;
   type: string;
   images: ReportImage[];
-  cost: string;
+  cost: string | number;
   location: {
     type: "Point";
     coordinates: [number, number]; // [longitude, latitude]
   };
+  validation?: ReportValidation;
   createdAt: string;
   updatedAt: string;
 }
